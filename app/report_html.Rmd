@@ -1,0 +1,1191 @@
+---
+## initialization of the report
+title: "Two Proportions by Bayes"
+author: 
+  - Denise Welsch
+  - Contributors^[Theresa Binot, Viktoria Daum, Renée Defren, Chiara Freitag, Jule Grote, Konrad Junkes, Anna-Lena Künster, Jomana Reusch, Simone Schüttler]
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+classoption: landscape
+params:
+  data: NA
+  filename: NA
+  enc_guessed: NA # used in Shiny app 
+  presence_exposure: NA
+  presence_outcome: NA
+  exposure: NA
+  outcome: NA
+  n_exposure1_outcome1: NA 
+  n_exposure1: NA 
+  n_exposure0_outcome1: NA 
+  n_exposure0: NA
+  a1: NA
+  b1: NA
+  a2: NA
+  b2: NA
+  user_selection_function_param: NA
+  rope_user: NA
+header-includes:
+   - \usepackage{xcolor}
+   - \usepackage{booktabs}
+   - \usepackage{longtable}
+   - \usepackage{float}
+   - \usepackage{amsmath}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, comment='', message = FALSE, error = TRUE, warning=FALSE, fig.width=8)
+
+## Import libraries used further below
+library(knitr) # for tables
+library(kableExtra) # for tables 
+library(plotly) # for 3d plots
+library(bayestestR)
+library(LearnBayes)
+library(see)
+library(ggridges)
+```
+
+
+```{r chunksinit}
+## Initialize evaluation resp. execution of subsequent chunks
+# Evaluation only for file upload
+evalfile <- is.data.frame(params$data)
+# Evaluation for cell frequency upload 
+evalcellfreq  <- !is.na(params$n_exposure1_outcome1)
+# Other initializations
+evalfile2 <- FALSE
+eval_rows <- FALSE
+eval_final <- FALSE
+rope_user <- NULL
+```
+
+
+```{r getdatafile, eval = evalfile}
+## Get data as a file 
+tryCatch({
+  
+  # Get data
+  df <- params$data
+  
+  # Save a copy for other purposes (downloadable code) 
+  df_code <- df
+  
+  # Restrict to exposure and outcome
+  vars <- c(params$outcome, params$exposure)
+  df <- df[,vars,drop=FALSE]
+  
+  # Drop empty rows
+  rowsums <- data.frame(sapply(df,is.na))
+  if (length(which(rowSums(rowsums) == dim(df)[2])) != 0L){
+    eval_rows <- TRUE
+    rows_drop <- (which(rowSums(rowsums) == dim(df)[2]))
+    length_non_complete <- length(which(rowSums(rowsums) == dim(df)[2]))
+    df <- df[-rows_drop, ,drop=FALSE]
+  }
+  
+  # frequencies are called n_
+  # for example n_exposure0_outcome1 is the frequency of datapoints without exposure but with present outcome
+  n_exposure1_outcome1 = sum(df[params$outcome]==params$presence_outcome & df[params$exposure]==params$presence_exposure) #s1
+  n_exposure0_outcome1 = sum(df[params$outcome]== params$presence_outcome & df[params$exposure]!=params$presence_exposure) #s2
+  
+  n_exposure1 = sum(df[params$exposure]==params$presence_exposure) #n1
+  n_exposure0 = sum(df[params$exposure]!=params$presence_exposure) #n2
+  
+  # Initialize next computations
+  evalfile2 <- TRUE
+  
+  # Move on if file upload and successful current chunk 
+  eval_final <- as.logical(evalfile*evalfile2)
+  
+  # Set cell freq upload to false 
+  evalcellfreq <- FALSE 
+
+}, error=function(e) {
+  
+  stop(safeError("This file does not fulfill the assumptions of this app. "))
+})
+
+```
+
+
+```{r checker, eval = evalfile}
+# Check if columns have more than 2 levels
+has_too_many_levels <- any(sapply(df, function(x) length(unique(x)) > 2))
+
+if (has_too_many_levels) {
+  eval_final <- FALSE
+  evalfile <- FALSE
+  evalfile2 <- FALSE
+  showNotification("Error: Variables must be binary (2 levels only).", duration=30)
+  cat("Error: Variables must be binary (2 levels only).")
+  Sys.sleep(5)
+}
+```
+
+
+```{r getcellfreq, eval=evalcellfreq}
+## get parameters from entry and name them in a logical way
+n_exposure1_outcome1 = params$n_exposure1_outcome1
+n_exposure1 = params$n_exposure1
+n_exposure0_outcome1 = params$n_exposure0_outcome1
+n_exposure0 = params$n_exposure0
+
+eval_final = TRUE
+```
+
+```{r getprior, eval=eval_final}
+## all these variables are in params for the two different data inputs
+user_selection_function_param = params$user_selection_function_param
+a1 = params$a1
+a2 = params$a2
+b1 = params$b1
+b2 = params$b2
+
+```
+
+
+\pagebreak
+
+```{r guititle, results="asis", eval=eval_final}
+cat("# Basic Information", fill=TRUE)
+```
+
+
+```{r guifile, results="asis", eval=evalfile}
+## Basic information for the case file upload
+cat("Uploaded file name:", as.character(params$filename[1]), fill=TRUE)
+cat("<br>",fill=TRUE) 
+  
+cat("Observations read (rows with at least one non-missing value): ", fill=TRUE)
+cat(dim(df)[1])
+cat("<br>",fill=TRUE) 
+
+# Missing rows
+if (exists("length_non_complete")){
+  cat("Number of rows that are dropped because they contain no values (all values are missing):", length_non_complete)
+  cat("<br>",fill=TRUE) 
+}
+
+if (exists("vars")){
+  cat("Name of the outcome variable: ", params$outcome, fill=TRUE)
+  cat("<br>",fill=TRUE) 
+}
+
+if (exists("vars")){
+  cat("Name of the exposure variable: ", params$exposure, fill=TRUE)
+  cat("<br>",fill=TRUE)
+}
+
+cat("Selected parameters for the prior distribution: $(\\theta_1, \\theta_2 ) \\sim beta(a1,b1) \\cdot beta(a2,b2)$: a1=",a1,", b1=",b1,", a2=",a2,", b2=",b2 )
+
+```
+
+
+```{r cellupload, eval=evalcellfreq , results='asis'}
+## Upload as cell frequencies, display them nicely
+cat(paste0("Number of Observations with both a present Outcome and a present Exposure: $y_1=", params$n_exposure1_outcome1,"$"), fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat(paste0("Number of Observations with present Exposure: $n_1=",params$n_exposure1,"$"), fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat(paste0("Number of Observations with present Outcome but without Exposure: $y_2=",params$n_exposure0_outcome1,"$"), fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat(paste0("Number of Observations without Exposure: $n_2=",params$n_exposure0,"$"),fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat("Name of the Outcome Variable: ", params$outcome, fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat("Name of the Exposure Variable: ", params$exposure, fill=TRUE)
+```
+
+
+\pagebreak
+
+```{r preamble, eval=eval_final, results='asis'}
+## general description what is the goal of the analysis and why we use Bayes Analysis
+cat("# Goals of the Analysis", fill=TRUE)
+cat("The data is analyzed in this app by means of Bayesian data analysis. Bayesian data analysis is a branch of statistical data analysis based on two fundamental ideas. The first idea is that Bayesian inference is a reallocation of credibility across possibilities by means of the well-known Bayes' theorem. The second idea is that the possibilities over which we allocate credibility are parameter values in a meaningful mathematical model.", fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat("<br>",fill=TRUE) 
+
+cat("In Bayes' theorem, existing knowledge about the parameter(s) under investigation (the a priori distribution, or prior for short) is combined with new knowledge from the data ('likelihood'), resulting in new, improved knowledge (a posteriori probability distribution).", fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat("<br>",fill=TRUE) 
+
+cat("An important benefit of Bayesian analysis is the ability to generate estimates and credible intervals for any derived parameter. Differences, ratios, effect sizes, and novel parameter combinations are directly computed from the posterior distribution. Another benefit of Bayesian analysis is its computationally robust estimates of parameter values and their credible intervals. The credible intervals do not depend on large-N approximations (as confidence intervals often do in frequentist approaches), nor do they depend on which tests are intended (as confidence intervals do in frequentist approaches). (Kruschke, John K., Bayesian Analysis Reporting Guidelines, Nature Human Behaviour, 2021)", fill=TRUE)
+cat("<br>",fill=TRUE) 
+cat("<br>",fill=TRUE)
+
+cat("The goal of this app is to generate Bayes estimates and credible intervals for the user-selected function of parameters: ", fill=TRUE)
+
+# Choice of the relationship between the thetas (3 Options)
+if (params$user_selection_function_param==1) {
+  cat("$\\theta_1 - \\theta_2$", fill=TRUE)
+} else if (params$user_selection_function_param==2) {
+    cat("$\\frac{\\theta_1}{\\theta_2}$", fill=TRUE)
+} else {
+  cat("$1-\\frac{\\theta_1}{\\theta_2}$", fill=TRUE)  
+}
+cat("based on the entered data and the chosen prior distribution of ")
+cat("$(\\theta_1, \\theta_2 ) \\sim beta(",a1,",",b1,") \\cdot beta(",a2,",",b2,")$.")
+```
+
+```{r title_descstats, eval=eval_final, results='asis'}
+cat("# The Data", fill=TRUE)
+```
+
+```{r datahead, eval=evalfile2, results='asis'}
+## If a datafile is uploaded, it will display the first 5 values of the data
+cat("## Data Head (first five observations)", fill=TRUE)
+df_data_head <- as.data.frame(head(df))
+# colnames(df_data_head) <- c(params$outcome, params$presence_exposure)
+
+df_data_head %>%
+  knitr::kable(format = "html") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  row_spec(0, extra_css = "font-weight: normal; border-bottom: 2px solid;") %>%
+  column_spec(1, extra_css = "border-right: 2px solid black;") 
+
+```
+
+\pagebreak
+
+```{r desctable, eval=eval_final, results='asis'}
+## Different tables to get an overview about the relations of the two variables Exposure and Outcome
+cat("## Frequency Table", fill=TRUE)
+#cat("1st cell row is frequency, 2nd cell row is percent, 3rd cell row is row percent, 4th cell row is column percent.")
+if (evalfile) {
+  name_exposure <- params$presence_exposure
+  name_nonexposure <- paste0("Non-", params$presence_exposure)
+} else if (evalcellfreq) {
+  name_exposure <- params$exposure
+  name_nonexposure <- paste0("Non-", params$exposure)
+} else {
+  stop("Neither file input nor cell frequency input provided.")
+}
+
+name_outcome = params$outcome
+name_nonoutcome = paste0("Non-", params$outcome)
+rowsum_1 = n_exposure0 - n_exposure0_outcome1+n_exposure1 - n_exposure1_outcome1
+rowsum_2 = n_exposure0_outcome1+n_exposure1_outcome1
+freq_colnames = c(name_nonexposure, name_exposure,"Sum")
+freq_rownames = c(name_nonoutcome, name_outcome,"Sum")
+# compute frequency table with absolute values
+df_table <- as.data.frame.matrix(matrix(c(
+  n_exposure0 - n_exposure0_outcome1, # Not exposed without outcome
+  n_exposure1 - n_exposure1_outcome1, # Exposed without outcome
+  rowsum_1, # sum no outcome
+  n_exposure0_outcome1,               # Not exposed with outcome
+  n_exposure1_outcome1,                # Exposed with outcome
+  rowsum_2,
+  n_exposure0,
+  n_exposure1,
+  n_exposure0+n_exposure1
+), nrow = 3, byrow = TRUE))
+colnames(df_table) <- freq_colnames
+rownames(df_table) <- freq_rownames
+
+totalsum <- n_exposure0+n_exposure1
+
+df_table %>%
+  kbl(caption = "Contingency Table: Absolute numbers") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  row_spec(0, extra_css = "font-weight: normal; border-bottom: 2px solid;") %>%
+  row_spec(nrow(df_table) - 1, extra_css = "border-bottom: 2px solid;") %>%   
+  column_spec(1, extra_css = "border-right: 2px solid black;") %>%         
+  column_spec(2, extra_css = "border-right: 1px solid lightgray;") %>%        
+  column_spec(3, extra_css = "border-right: 2px solid black;") %>%               row_spec(1, extra_css = "border-top: 1px solid lightgray;")
+
+# Compute frequency table with percentages of the absolute values
+df_table_percent<- as.data.frame.matrix(matrix(c(
+  paste0(round((n_exposure0 -n_exposure0_outcome1)/totalsum*100,
+               digits=2),"%"), 
+  paste0(round((n_exposure1 - n_exposure1_outcome1)/totalsum*100,
+               digits=2),"%"),
+  paste0(round((n_exposure0 - n_exposure0_outcome1+n_exposure1 -
+                  n_exposure1_outcome1)/totalsum*100,
+               digits=2),"%"), 
+  paste0(round((n_exposure0_outcome1)/totalsum*100,digits=2),"%"), 
+  paste0(round((n_exposure1_outcome1)/totalsum*100,digits=2),"%"),            
+  paste0(round((n_exposure0_outcome1+n_exposure1_outcome1)/totalsum*100,
+               digits=2),"%"),
+  paste0(round((n_exposure0)/totalsum*100,digits=2),"%"),
+  paste0(round((n_exposure1)/totalsum*100,digits=2),"%"),
+  paste0(100,"%")
+), nrow = 3, byrow = TRUE))
+colnames(df_table_percent) <- freq_colnames
+rownames(df_table_percent) <- freq_rownames
+
+
+df_table_percent %>%
+  kbl(caption = "Contingency Table: Percentages of counts by total frequency") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  row_spec(0, extra_css = "font-weight: normal; border-bottom: 2px solid;") %>%
+  row_spec(nrow(df_table) - 1, extra_css = "border-bottom: 2px solid;") %>%   
+  column_spec(1, extra_css = "border-right: 2px solid black;") %>%         
+  column_spec(2, extra_css = "border-right: 1px solid lightgray;") %>%        
+  column_spec(3, extra_css = "border-right: 2px solid black;") %>%               row_spec(1, extra_css = "border-top: 1px solid lightgray;")
+
+# Compute table that is used in the barplots
+df_table_plot <- as.data.frame.matrix(matrix(c(
+  n_exposure0 - n_exposure0_outcome1, # Not exposed without outcome
+  n_exposure1 - n_exposure1_outcome1, # Exposed without outcome
+  n_exposure0_outcome1,               # Not exposed with outcome
+  n_exposure1_outcome1                # Exposed with outcome
+), nrow = 2, byrow = TRUE))
+
+colnames(df_table_plot) <- c(name_nonexposure, name_exposure)
+rownames(df_table_plot) <- c(name_nonoutcome, name_outcome)
+
+rowsum <- apply(df_table_plot, MARGIN  = 1, FUN = sum)
+colsum <- apply(df_table_plot, MARGIN  = 2, FUN = sum)
+
+cat("These two tables depict the frequencies and percentages of the total data. Additionally, one can calculate the column percentages for each table:")
+cat("<br>", fill=TRUE)
+
+#column percent per table
+cat(paste0("\\begin{align} P(\\text{",name_nonoutcome,"} \\ | \\ \\text{ ",name_nonexposure,"} ) &= ",round((n_exposure0 - n_exposure0_outcome1)/n_exposure0 * 100,digits = 2),"\\% \\\\ P(\\text{",name_outcome,"} \\ | \\ \\text{ ",name_nonexposure,"} ) &= ",round( n_exposure0_outcome1/n_exposure0 * 100,digits = 2),"\\% \\\\ P(\\text{",name_nonoutcome,"} \\ | \\ \\text{ ",name_exposure,"} ) &= ",round((n_exposure1-n_exposure1_outcome1)/n_exposure1 * 100,digits = 2),"\\% \\\\ P(\\text{",name_outcome,"} \\ | \\ \\text{ ",name_exposure,"} ) &= ",round((n_exposure1_outcome1)/n_exposure1 * 100,digits = 2),"\\% \\end{align}"))
+```
+
+
+\pagebreak
+
+```{r descplots, eval=eval_final, results='asis', fig.cap=' ', fig.subcap=c("Barplot of Outcome", "Barplot of Exposure", "Barplot of Outcome with present Exposure", "Barplot of Outcome without present Exposure" ), fig.ncol=2, out.width="50%", fig.align='left', out.height="30%"}
+
+##different barplots
+cat("## Barplots", fill=TRUE)
+
+#overall percentages from the contingency table
+# Outcome
+barplot(rowsum / totalsum, ylim = c(0, 1), names.arg = rownames(df_table_plot), xlab =params$outcome, ylab = "Proportion", col = c("#2fa42d", "#396e9f"), main=paste("Distribution in the",params$outcome,"Population"), cex.main = 1.5)
+
+# Exposure
+barplot(colsum / totalsum, ylim = c(0, 1), names.arg = colnames(df_table_plot), xlab = params$exposure, ylab = "Proportion", col = c("#2fa42d", "#396e9f"), main=paste("Distribution in the",params$exposure,"Population"), cex.main = 1.5)
+
+# row percentages of the contingency table
+#  Outcome with present Exposure
+barplot(c(n_exposure1-n_exposure1_outcome1,n_exposure1_outcome1)/n_exposure1,ylim=c(0,1), xlab =params$outcome, ylab ="Proportion", col=c("#2fa42d","#396e9f"), main=paste("Distribution in the", name_exposure, "Population"), cex.main = 1.5)
+
+
+#  Outcome without present Exposure
+barplot(c(n_exposure0 - n_exposure0_outcome1, n_exposure0_outcome1) / n_exposure0, ylim = c(0, 1), xlab =params$outcome, ylab = "Proportion", col = c("#2fa42d", "#396e9f"), main=paste("Distribution in the", name_nonexposure, "Population"), cex.main = 1.5)
+
+```
+
+\pagebreak
+
+```{r the_model, eval=eval_final, results='asis'}
+## Description of the assumed model
+cat("# The Model", fill=TRUE)
+cat("\n## Notation", fill=TRUE)
+cat("We assume following statistical model for the data: ", fill=TRUE)
+cat("$$X_{11},...,X_{1n_1} \\hspace{1cm} i.i.d. \\sim Be(\\theta_1) \\, ,$$", fill=TRUE)
+cat("$$X_{21},...,X_{2n_2} \\hspace{1cm} i.i.d.  \\sim Be(\\theta_2)$$", fill=TRUE)
+cat(paste0("with sample sizes $n_1=$ ",n_exposure1," and $n_2=$ ",n_exposure0," and Bernoulli distributed random variables in the two groups with distribution parameter $\\theta_1$ and $\\theta_2$ corresponding to exposure levels ",colnames(df_table)[2]," and ",colnames(df_table)[1], ".\\
+The Exposure column indicates in which of the two groups an individual is. The Outcome column indicates whether the event occurred for an individual or not. \\"), fill=TRUE)
+
+cat("Summing up the values of 0 and 1 in the respective groups results in the following random variables:", fill=TRUE)
+cat("$$Y_1= \\sum_{i=1}^{n_1} X_{1i} \\hspace{1cm} i.i.d.  \\sim Bi(n_1,\\theta_1) \\, ,$$", fill=TRUE)
+cat("$$Y_2= \\sum_{i=1}^{n_2} X_{2i} \\hspace{1cm} i.i.d. \\sim Bi(n_2,\\theta_2) \\, .$$", fill=TRUE)
+cat("These random variables are binomially distributed with the distribution parameters $n_i$ and $\\theta_i \\, , i\\in\\{1,2\\}$. \\", fill=TRUE)
+cat("The selected function ", fill=TRUE)
+
+# separated for the different relationships between the thetas
+if (params$user_selection_function_param==1) {
+  cat("$\\theta_1 - \\theta_2$, describes the difference between two success probabilities.", fill=TRUE)
+} else {
+  if (params$user_selection_function_param==2) {
+  cat("$\\theta_1 / \\theta_2$, describes the Relative Risk, e.g. ratio of two success probabilities.", fill=TRUE)
+} else {
+  cat("$1-\\theta_1 / \\theta_2$, describes 1-Relative Risk, where Relative Risk is the ratio of two probabilities of success.", fill=TRUE)  
+}
+}
+
+```
+
+```{r likelihood, eval=eval_final, results='asis'}
+## Initializing and description of the Likelihood-function
+cat("## The Likelihood", fill=TRUE)
+
+cat("The likelihood function is a function of $(\\theta_1, \\theta_2 )$ that describes the plausibility of $(Y_1,Y_2)=(y_1,y_2)$ with different $(\\theta_1, \\theta_2 )$. The likelihood function should not be confused with a probability function.", fill = TRUE)
+cat("<br>", fill=TRUE)
+cat("Let", fill = TRUE)
+cat("$$(Y_1,Y_2) \\sim p(Y_1,Y_2 \\ | \\ \\theta_1, \\theta_2)\\, ,$$",fill = TRUE)
+cat("where $p$ is a probability mass function with")
+cat("<br>", fill=TRUE)
+
+#Likelihood formula of D given theta_1 and theta_2
+cat("\\begin{align} p(y_1,y_2) = P(Y_1=y_1,Y_2=y_2 \\ | \\ \\theta_1, \\theta_2) &= P(Y_1=y_1 \\ | \\ \\theta_1, \\theta_2) \\cdot P(Y_2=y_2 \\ | \\ \\theta_1, \\theta_2) \\\\[1em] &= \\underbrace{P(Y_1=y_1 \\ | \\ \\theta_1)}_{\\sim Bi(n_1,\\theta_1)} \\cdot \\underbrace{P(Y_2=y_2 \\ | \\ \\theta_2)}_{\\sim Bi(n_2,\\theta_2)} \\\\[1em] &= \\begin{pmatrix} n_1 \\\\ y_1 \\end{pmatrix} \\theta_1^{y_1} (1-\\theta_1)^{n_1 - y_1} \\cdot \\begin{pmatrix} n_2 \\\\ y_2 \\end{pmatrix} \\theta_2^{y_2}(1-\\theta_2)^{n_2 - y_2}\\, . \\end{align}", fill = TRUE)
+cat("<br>", fill=TRUE)
+
+cat("The likelihood function is defined as follows $L: [0,1] \\times [0,1] \\to [0, \\infty)$ with", fill = TRUE)
+cat("$$L(\\theta_1, \\theta_2 \\ | \\ y_1,y_2) = \\begin{pmatrix} n_1 \\\\ y_1 \\end{pmatrix} \\theta_1^{y_1} (1-\\theta_1)^{n_1 - y_1} \\cdot  \\begin{pmatrix} n_2 \\\\ y_2 \\end{pmatrix} \\theta_2^{y_2}(1-\\theta_2)^{n_2 - y_2} \\, .$$", fill=TRUE)
+
+cat("As can be seen, the formulas for the probability mass function $p$ and the likelihood function $L$ are similar. However, it is important to know that the likelihood function $L$ is defined on the parameter space $(\\theta_1,\\theta_2)$ and not on the data space $(y_1,y_2)$ like the probability mass function $p$.", fill=TRUE)
+cat("<br>", fill=TRUE)
+cat("<br>", fill=TRUE)
+
+# Likelihood formular of D given theta_1 and theta_2 with user entered data
+# Insert the values of the data
+cat(paste0("Consider our data $n_1=", n_exposure1, ", n_2=", n_exposure0, ", y_1=", n_exposure1_outcome1, ", y_2=", n_exposure0_outcome1,"$:"),fill=TRUE)
+cat("<br>", fill=TRUE)
+
+cat(paste0("$$P(Y_1=", n_exposure1_outcome1, ",Y_2=", n_exposure0_outcome1, " \\ | \\ \\theta_1, \\theta_2) = \\begin{pmatrix} ", n_exposure1, " \\\\ ", n_exposure1_outcome1," \\end{pmatrix} \\theta_1^{", n_exposure1_outcome1, "}(1-\\theta_1)^{", n_exposure1, " - ", n_exposure1_outcome1, "} \\cdot  \\begin{pmatrix} ", n_exposure0, " \\\\ ", n_exposure0_outcome1," \\end{pmatrix} \\theta_2^{", n_exposure0_outcome1, "}(1-\\theta_2)^{", n_exposure0, " - ", n_exposure0_outcome1, "} \\, .$$"), fill=TRUE)
+cat("<br>", fill=TRUE)
+
+cat("Then",fill = TRUE)
+cat(paste0("$$L(\\theta_1, \\theta_2 \\ | \\ y_1=", n_exposure1_outcome1, ",y_2=", n_exposure0_outcome1, ")=\\begin{pmatrix} ", n_exposure1, " \\\\ ", n_exposure1_outcome1," \\end{pmatrix} \\theta_1^{", n_exposure1_outcome1, "}(1-\\theta_1)^{", n_exposure1, " - ", n_exposure1_outcome1, "} \\cdot  \\begin{pmatrix} ", n_exposure0, " \\\\ ", n_exposure0_outcome1," \\end{pmatrix} \\theta_2^{", n_exposure0_outcome1, "}(1-\\theta_2)^{", n_exposure0, " - ", n_exposure0_outcome1, "} \\, .$$"),fill=TRUE)
+cat("<br>", fill=TRUE)
+
+cat("Examples for selected $(\\theta_1, \\theta_2)$, given our data:", fill=TRUE)
+
+# Define likelihood function (adjust if needed)
+likelihood <- function(theta, successes, trials) {
+  if (any(trials <= 0)) stop("Trials must be greater than 0")
+  if (any(successes < 0)) stop("Successes must be non-negative")
+  if (any(theta <= 0 | theta >= 1)) stop("Theta must be between 0 and 1")
+  dbinom(successes, size = trials, prob = theta)
+}
+
+# Exp 1
+L1 = likelihood(n_exposure1_outcome1/n_exposure1,n_exposure1_outcome1,n_exposure1)*likelihood(n_exposure0_outcome1/n_exposure0,n_exposure0_outcome1,n_exposure0)
+r_L1 = round(L1,4)
+p_L1 = sprintf("%.4f", r_L1)
+
+# Exp 2
+L2 = likelihood(0.5,n_exposure1_outcome1,n_exposure1)*likelihood(0.5,n_exposure0_outcome1,n_exposure0)
+r_L2 = round(L2,4)
+p_L2 = sprintf("%.4f", r_L2)
+
+# Exp 3
+if(n_exposure1_outcome1 %in% c(0,1,2,3) || n_exposure0_outcome1 %in% c(0,1,2,3)){ # Not enough data
+  samp = sample(c(1,2,3),1)
+} else{
+  samp = sample(c(-3,-2,-1,1,2,3),1)
+}
+L3 = likelihood((n_exposure1_outcome1+samp)/n_exposure1,n_exposure1_outcome1,n_exposure1)*likelihood((n_exposure0_outcome1+samp)/n_exposure0,n_exposure0_outcome1,n_exposure0)
+r_L3 = round(L3,4)
+p_L3 = sprintf("%.4f", r_L3)
+
+cat("<br>", fill=TRUE)
+cat(paste0("\\begin{align} L \\left( \\theta_1= \\frac{", n_exposure1_outcome1, "}{", n_exposure1, "}, \\theta_2= \\frac{", n_exposure0_outcome1, "}{", n_exposure0, "} \\ \\biggl | \\ y_1=", n_exposure1_outcome1, ", y_2=", n_exposure0_outcome1, " \\right) &=", 
+p_L1,"\\, , \\\\[1em] L\\left( \\theta_1 = \\frac{", n_exposure1_outcome1+samp, "}{", n_exposure1, "}, \\theta_2= \\frac{", n_exposure0_outcome1+samp, "}{", n_exposure0, "} \\ \\biggl | \\ y_1=", n_exposure1_outcome1, ", y_2=", n_exposure0_outcome1, " \\right) &=", p_L3, "\\, , \\\\[1em] L(\\theta_1= 0.5, \\theta_2= 0.5 \\ | \\  y_1=", n_exposure1_outcome1, ", y_2=", n_exposure0_outcome1, ") &=", p_L2,"\\, . \\end{align}"), fill=TRUE)
+cat("<br>", fill=TRUE)
+
+cat("Remark: Because of the independence of $Y_1$ and $Y_2$ you can get the following marginal distributions: ",fill=TRUE) 
+
+#Marginal distribution of D_1 given theta_1 and of D_2 given theta_2
+cat("\\begin{align} P(Y_1=y_1 \\ | \\ \\theta_1 ) &= \\begin{pmatrix} n_1 \\\\ y_1 \\end{pmatrix} \\theta_1^{y_1}(1-\\theta_1)^{n_1 - y_1} \\, , \\\\[1em] P(Y_2=y_2 \\ | \\ \\theta_2) &= \\begin{pmatrix} n_2 \\\\ y_2 \\end{pmatrix} \\theta_2^{y_2}(1-\\theta_2)^{n_2 - y_2} \\, . \\end{align}", fill = TRUE)
+
+## Region to plot 
+Theta1 = seq(0.01, 0.99, by=0.01)  
+Theta2 = seq(0.01, 0.99, by=0.01)
+
+#Calculation of both marginal distributions
+l1 = likelihood(Theta1, n_exposure1_outcome1, n_exposure1)
+l2 = likelihood(Theta2, n_exposure0_outcome1, n_exposure0)
+
+#Matrix multiplication to calculate likelihood of D given theta_1 and theta_2
+Likelihood = l1 %*% t(l2)
+
+#Generation of the surface plot of D given theta_1 and theta_2
+#with white x and y dimensional contour lines
+fig <- plot_ly(z = ~Likelihood, x = ~Theta1, y = ~Theta2, contours = list(x = list(show = TRUE, start= 0, end= 1, size = 0.05 ,color = 'white'), y = list(show = TRUE, start= 0, end= 1, size = 0.05 ,color = 'white')))
+
+#Adding a description when hovering over the surface of plot
+#with description of the values of theta_1, theta_2 and the likelihood
+fig <- fig %>% add_surface(hovertemplate = paste0('\u03b8\u2081: %{x}<br>', '\u03b8\u2082: %{y}<br>', 'p(D | \u03b8\u2081, \u03b8\u2082): %{z}<extra></extra>'))
+
+#Adding axis labeling of surface plot with theta_1, theta_2 and likelihood
+fig <- fig %>% layout(scene = list(camera = list(eye = list(x = -1.5, y = -1.5, z = 1.5)),
+                                   xaxis=list(title = "\u03b8\u2081"), 
+                                   yaxis=list(title = "\u03b8\u2082"), 
+                                   zaxis=list(title = "L(\u03b8\u2081, \u03b8\u2082 | y\u2081, y\u2082)"), 
+                                   title = "theta"))
+#Display plot in report  
+fig
+```
+
+```{r priortext, eval=eval_final, results='asis'}
+## Description of the prior distribution
+
+cat("## The Prior Distribution", fill=TRUE)
+cat("Preliminary information is included in the analysis with the help of the prior distribution.
+For binomially distributed measurement data, a beta distribution is suitable as a priori distribution: \n",fill=TRUE)
+cat("\\begin{align}
+    (\\theta_1, \\theta_2) \\sim p(\\theta_1,\\theta_2) = p(\\theta_1) \\cdot p(\\theta_2) &= beta(a_1,b_1) \\cdot beta(a_2,b_2) \\\\[1em] 
+        &= \\frac{1}{B(a_1,b_1)} \\theta_1^{a_1-1} \\left(1-\\theta_1\\right)^{b_1-1} \\cdot \\frac{1}{B(a_2,b_2)} \\theta_2^{a_2-1} \\left(1-\\theta_2\\right)^{b_2-1}
+    \\end{align}",fill=TRUE)
+cat("with $B$ as the beta function (also called \'Euler integral of the first kind\').",fill=TRUE)
+cat("<br>", fill=TRUE)
+
+cat("We assume that the beliefs about the two parameters are independent, i.e., $\\theta_1$ and $\\theta_2$ are independent, with marginal belief distributions $p(\\theta_1)$, $p(\\theta_2)$.",fill = TRUE) 
+cat("<br>", fill=TRUE)
+cat("<br>", fill=TRUE)
+
+# no default parameters
+if(a1!=0.5 | b1!=0.5 | a2!=0.5 | b2!=0.5){
+  cat("Your choice of the parameters for the prior distributions is:\n ")
+  cat(paste("$$(\\theta_1, \\theta_2) \\sim beta(",a1,",",b1,") \\cdot beta(",a2,",",b2,").$$"),fill=TRUE)
+  
+  # mode exists
+  if(a1 > 1 & b1 > 1 & a2 > 1 & b2 > 1){
+    
+    # same values
+    if(a1 == a2 & a1 == b1 & a1 == b2){
+      cat("In this case, all parameters of the prior were chosen to be the same greater than one. Therefore, the maximum of the prior distribution is at $(0.5, 0.5)$.",fill=TRUE)
+    # different values
+    } else{
+      t1_m = round((a1-1)/(a1+b1-2), digits=3)
+      t2_m = round((a2-1)/(a2+b2-2), digits=3)
+      cat(paste0("In this case, not all parameters were chosen to be the same. The prior is peaked in $(",t1_m,", ",t2_m,")$."),fill=TRUE)
+    }
+  
+  # mode does not exist  
+  } else{
+    
+    # same values
+    if(a1 == a2 & a1 == b1 & a1 == b2){
+      cat("In this case, all parameters were chosen to be the same. ",fill=TRUE)
+    # different values
+    } else{
+      cat("In this case, not all parameters were chosen to be the same. ",fill=TRUE)
+    }
+    
+  }
+
+# default parameters    
+} else{
+  cat("The default parameters are chosen: \n",fill=TRUE)
+  cat("$$(\\theta_1, \\theta_2) \\sim  beta(0.5,0.5) \\cdot beta(0.5,0.5) \\, .$$",fill=TRUE)
+  cat("These default parameters have their origin in the so called Jeffrey's prior which is a non-informative prior distribution. Non-informative prior distributions are used when little or no information is available about the parameters to be determined and therefore no statement can be made about the distribution of the parameters. In our assumed situation we have two parameters $\\theta_1$ and $\\theta_2$. In the following, Jeffrey's prior is described for one general $\\theta$, but we can use these results from Jeffrey's prior and insert them in both of the beta distributions multiplied in our prior. The priors $p(\\theta)=beta(0.5,0.5)$ result from Jeffrey's rule", fill=TRUE) 
+  cat("$$p(\\theta) \\propto \\sqrt{I(\\theta)}$$", fill=TRUE)
+  cat("where $I(\\theta)$ is the Fisher information function", fill=TRUE)
+  cat("$$I(\\theta)=-E\\left[ \\frac{\\partial^2}{\\partial \\theta^2} L(\\theta \\ | \\ \\bullet) \\right]$$", fill=TRUE) 
+  cat("and where $L(\\theta \\ | \\ \\bullet)$ is the likelihood function of the data $\\bullet$.",fill=TRUE)
+  cat("<br>", fill=TRUE)
+  
+  cat("In our case, the likelihood is a binomial distribution. Hence, the Fisher information function is", fill=TRUE)
+  cat("$$I(\\theta)=\\frac{1}{\\theta (1-\\theta)} \\, .$$", fill=TRUE)
+  cat("This results in", fill=TRUE)
+  cat("$$p(\\theta) \\propto \\theta^{-0.5}(1-\\theta)^{-0.5}$$", fill=TRUE) 
+  cat("because of Jeffrey's rule. The resulting prior distribution is now $beta(0.5,0.5)$ which represents a mild prior belief..",fill=TRUE)
+}
+cat("<br>", fill=TRUE)
+cat("<br>", fill=TRUE)
+
+cat("Note that when choosing the prior distribution, the amount of information already known about the probabilities $\\theta_1$ and $\\theta_2$ should be taken into account. If not so much or nothing at all is known, $a_i = b_i$ should be selected for the distribution of $\\theta_i$, $i=1,2$, so that the  mean and the mode are equal to $0.5$. In general, the mean $\\mu_i$ and the mode $\\omega_i$ can be calculated as follows:", fill=TRUE) 
+cat("$$ \\mu_i = \\frac{a_i}{a_i+b_i} \\text{ and } \\omega_i = \\frac{a_i -1}{a_i+b_i-2} \\, , \\  a_i,b_i > 1 \\, . $$",fill=TRUE)
+cat("So if $a_i>b_i$, $\\mu_i$ and $\\omega_i$ are greater than $0.5$ and if $a_i<b_i$, $\\mu_i$ and $\\omega_i$ are less than $0.5$. So the prior distribution as a product of two $beta(a_i,b_i)$ distributions is peaked in $(\\omega_1,\\omega_2)$ when $a_i,b_i > 1$ for all $i=1,2$ because all values of the beta density are greater than or equal to $0$. The greater the sum $a_i+b_i$, the more confident one is in the assumption of the tendencies for $\\theta_i$.")
+
+```
+
+
+```{r priorplot, eval=eval_final, results='asis'}
+## Plot the prior (following first row of page 167 DDBA)
+
+cat("The next plot shows the probability density function (pdf) of the prior distribution.",fill=TRUE)
+
+# Bounding for density values -> better colourscaling
+pTheta1 = dbeta(Theta1,params$a1,params$b1)
+pTheta2 = dbeta(Theta2,params$a2,params$b2)
+pTheta1Theta2 <- pTheta1 %*% t(pTheta2)
+
+# Generate plot
+scene = list(camera = list(eye = list(x = -1.5, y = -1.5, z = 1.5)),
+             xaxis = list(title = "\u03b8\u2081"),
+             yaxis = list(title = "\u03b8\u2082"),
+             zaxis = list(title = "p(\u03b8\u2081, \u03b8\u2082)" ))
+plt3d <- plot_ly(x = Theta1, y = Theta2, z = pTheta1Theta2, type = "surface",
+                 contours = list(
+                   x = list(show = TRUE, start= 0, end= 1, size = 0.05 ,color = 'white'),
+                   y = list(show = TRUE, start= 0, end= 1, size = 0.05 ,color = 'white'))) %>%
+  layout(scene=scene)
+
+plt3d
+
+```
+
+
+```{r posterior1, eval=eval_final, results='asis'}
+## Description of the posterior distribution
+
+cat("## The Posterior Distribution", fill=TRUE)
+cat("The posterior distribution is an update of the prior distribution using the likelihood. \\cite{kruschke} This probability distribution shows how strongly we should believe in the various parameter values after we have seen the data $(y_1,y_2)$ out of $(n_1,n_2)$. It is calculated with the help of Bayes theorem. In what follows we derive the posterior in general terms for arbitrary sample sizes and outcome summaries")  
+cat("\\begin{align}
+    p(\\theta_1,\\theta_2 \\ | \\ y_1,y_2)&=\\frac{p(y_1,y_2 \\ | \\ \\theta_1,\\theta_2)p(\\theta_1,\\theta_2)}{p(y_1,y_2)} \\, ,
+    \\end{align}")
+cat("where", fill=TRUE)
+cat("\\begin{align} 
+    p(y_1,y_2 \\ | \\ \\theta_1,\\theta_2) &= L(\\theta_1,\\theta_2 \\ | \\ y_1,y_2)
+    \\end{align}", fill=TRUE)
+cat("is the likelihood function and", fill=TRUE)
+cat("\\begin{align}
+    p(y_1,y_2) &= \\int \\int
+    p(y_1,y_2 \\ | \\ \\theta_1,\\theta_2)p(\\theta_1,\\theta_2) \\ d \\theta_1 d
+    \\theta_2 
+    \\end{align}", fill=TRUE)
+cat("is a normalizing constant.", fill=TRUE)
+cat("<br>",fill=TRUE) 
+
+cat("Including the likelihood and the assumed prior distributions of the $\\theta_i$, $i=1,2$, we get the numerator of the Bayes theorem:")
+cat("\\begin{align}
+    z = \\underbrace{\\binom{n_1}{y_1}\\theta_1 ^{y_1}(1-\\theta_1)^{n_1-y_1} \\cdot \\binom{n_2}{y_2}\\theta_2 ^{y_2}(1-\\theta_2)^{n_2-y_2}}_{\\text{likelihood function}} \\cdot \\underbrace{\\frac{\\theta_1^{a_1-1}(1-\\theta_1)^{b_1-1}}{B(a_1,b_1)}}_{\\text{prior } \\theta_1} \\cdot \\underbrace{\\frac{\\theta_2^{a_2-1}(1-\\theta_2)^{b_2-1}}{B(a_2,b_2)}}_{\\text{prior } \\theta_2} \\, . \\end{align}")
+
+cat("Now we can insert this in the actual Bayes theorem. With some power calculations we get:")
+cat("\\begin{align}
+     p(\\theta_1,\\theta_2 \\ | \\ y_1,y_2) &= 
+     \\frac{\\frac{\\binom{n_1}{y_1}\\binom{n_2}{y_2}}{B(a_1,b_1)B(a_2,b_2)}
+     \\cdot \\theta_1^{y_1+a_1-1}(1-\\theta_1)^{n_1-y_1+b_1-1}\\cdot\\theta_2^
+     {y_2+a_2-1}(1-\\theta_2)^{n_2-y_2+b_2-1}}{p(y_1,y_2)} \\\\[1em]
+     &= \\frac{\\theta_1^{y_1+a_1-1}(1-\\theta_1)^{n_1-y_1+b_1-1}\\cdot\\theta_
+     2^{y_2+a_2-1}(1-\\theta_2)^{n_2-y_2+b_2-1}}{B(a_1+y_1,b_1+n_1-y_1)\\cdot
+     B(a_2+y_2,n_2-y_2+b_2) } \\, .
+     \\end{align}")
+
+cat("The last step in this computation follows from the normalizing constant and the condition that a density has to integrate to one. $B(\\cdot,\\cdot)$ are the normalizing constants of the beta distribution. ")
+cat("Hence, our posterior function is distributed as follows:",fill = TRUE)
+cat("\\begin{align}
+    \\left( \\theta_1,\\theta_2 \\ | \\ y_1,y_2 \\right) \\sim beta(a_1+y_1,b_1+n_1-y_1) \\cdot beta(a_2+y_2, n_2+b_2-y_2) \\, . 
+    \\end{align}")
+cat("As can be seen here, the $\\theta_i$, $i=1,2$, are independent under the posterior. For our model assumptions, the posterior distribution has the following form:", fill=TRUE)
+cat(paste0("\\begin{align} 
+    p(\\theta_1,\\theta_2 \\ | \\ ", n_exposure1_outcome1,",",n_exposure0_outcome1,")
+    &= beta(",a1,"+",n_exposure1_outcome1,",",b1,"+",n_exposure1,"-",n_exposure1_outcome1,") \\cdot beta(",a2,"+",n_exposure0_outcome1,",",b2,"+",n_exposure0,"-",n_exposure0_outcome1,") \\\\
+    &= beta(",a1+n_exposure1_outcome1,",",b1+n_exposure1-n_exposure1_outcome1,") \\cdot beta(",a2+n_exposure0_outcome1,",",b2+n_exposure0-n_exposure0_outcome1,") \\, .  
+    \\end{align}"))
+
+```
+
+
+```{r posterior2, eval=eval_final, results='asis'}
+## Plot the posterior (following last row of page 167 DDBA)
+
+# Generate z-values 
+pTheta1Theta2GivenData <- matrix(data=NA, nrow=length(Theta1), ncol=length(Theta2))
+for (i in 1:length(Theta1)){
+  for (j in 1:length(Theta2)){
+    pTheta1Theta2GivenData[i,j]<- dbeta(Theta1[i], a1+n_exposure1_outcome1,b1+n_exposure1-n_exposure1_outcome1)*
+      dbeta(Theta2[j], a2+n_exposure0_outcome1,b2+n_exposure0-n_exposure0_outcome1)   
+  }
+}
+
+cat("The following figure shows the probability density function (pdf):", fill=TRUE)
+
+# Generate plot
+plot_ly(x = Theta1, y = Theta2, z = pTheta1Theta2GivenData, type = "surface",
+        contours = list(
+          x = list(show = TRUE, start= 0, end= 1, size = 0.05 ,color = 'white'),
+          y = list(show = TRUE, start= 0, end= 1, size = 0.05 ,color = 'white'))) %>%
+  layout(scene = list(camera = list(eye = list(x = -1.5, y = -1.5, z = 1.5)),
+                      xaxis = list(title = "\u03b8\u2081"),
+                      yaxis = list(title = "\u03b8\u2082"),
+                      zaxis = list(title = "p(\u03b8\u2081, \u03b8\u2082 \u2223 y\u2081, y\u2082)" )))
+ 
+cat("In the figure, at each point in the parameter space ($\\theta_1$,$\\theta_2$), the posterior is the product of the prior and likelihood values at that point divided by the normalizer $p(y_1,y_2)$. Thus, it is proportional to the prior and the likelihood ($\\text{posterior} \\propto \\text{prior} \\times \\text{likelihood}$).") 
+
+```
+
+```{r simulate, eval=eval_final}
+## Simulate from posterior
+posterior_Theta1 <- rbeta(10000,n_exposure1_outcome1+a1,(n_exposure1-n_exposure1_outcome1)+b1)
+posterior_Theta2 <- rbeta(10000,n_exposure0_outcome1+a2,(n_exposure0-n_exposure0_outcome1)+b2)
+```
+
+```{r functionparameter, eval=eval_final}
+## Function of parameters of interest
+if (params$user_selection_function_param == 3) {
+  estimate <- 1-posterior_Theta1/posterior_Theta2
+} else if (params$user_selection_function_param == 2){
+  estimate <- posterior_Theta1/posterior_Theta2  
+} else {
+  estimate <- posterior_Theta1-posterior_Theta2  
+}
+```
+
+```{r function_posterior, eval=eval_final, results="asis"}
+cat("# Inference with Respect to Posterior", fill=TRUE)
+cat("\n## Summary of Posterior Distribution", fill=TRUE)
+```
+
+
+```{r function_posterior2, eval=eval_final}
+# Summarize posterior in a table. For continuous parameters, derived functions of parameters and predicted values, report the central tendency and limits of the credible interval. Explicitly state whether you are using density-based values (mode and HDI) or quantile-based values (median and ETI), and state the mass of the credible interval (for example, 95%)
+if (is.null(rope_user)){
+  results_ETI <- describe_posterior(estimate, ci = 0.95, centrality="all", dispersion=TRUE, test=NULL, ci_method = "ETI") 
+  results_HDI <- describe_posterior(estimate, ci = 0.95, centrality="all", dispersion=TRUE, test=NULL, ci_method = "HDI")
+
+} else {
+  results_ETI <- describe_posterior(estimate, ci = 0.95, centrality="all", dispersion=TRUE, test="rope", rope_range=rope_user, ci_method = "ETI") 
+  results_HDI <- describe_posterior(estimate, ci = 0.95, centrality="all", dispersion=TRUE, test="rope", rope_range=rope_user, ci_method = "HDI")
+
+  # ROPE limits and decisions. 
+}
+
+# Renaming column names
+colnames(results_ETI)[colnames(results_ETI) == "CI"] <- "CI_ETI"
+colnames(results_ETI)[colnames(results_ETI) == "CI_low"] <- "CI_ETI_low"
+colnames(results_ETI)[colnames(results_ETI) == "CI_high"] <- "CI_ETI_high"
+
+# Combining dataframes
+combined_results <- cbind(results_ETI, CI_HDI = results_HDI$CI, CI_HDI_low = results_HDI$CI_low, CI_HDI_high = results_HDI$CI_high)
+
+# Editing dataframe 
+results <- data.frame(t(combined_results), interpretation = rep(1,12))
+results <- data.frame(parameter =  rownames(results)[-1], posterior = round(as.numeric(t(combined_results)[-1]),3))
+
+## Get the Function of parameters of interest
+if (params$user_selection_function_param == 3) {
+  parameter_description <- "\\(1 - \\frac{\\theta_1}{\\theta_2}\\)"
+} else if (params$user_selection_function_param == 2){
+  parameter_description <- "\\(\\frac{\\theta_1}{\\theta_2}\\)" 
+} else {
+  parameter_description <- "\\(\\theta_1 - \\theta_2\\)"
+}
+
+# Function for interpretation
+interpretation_func <- function(dataset, parameter_description) {
+  interpretation <- c()  
+  for (i in 1:nrow(dataset)) {
+    if (dataset$parameter[i] == "Median") {
+    interpretation[i] <- paste0("The median is the middle value of the posterior distribution for the function                                    of interest ", parameter_description, ". It divides the values of the posterior                                   distribution into two equal halves, where 50% of the values lie below and 50%                                     lie above this point. In this case, the median is \\(", dataset$posterior[i],                                     "\\), meaning that 50% of the posterior distribution lie above and 50% below \\(",                                 dataset$posterior[i], "\\).")
+  
+} else if (dataset$parameter[i] == "MAD") {
+  interpretation[i] <- paste0("The MAD (Median Absolute Deviation) is a measure of variability for the                                          function of interest ", 
+                              parameter_description, 
+                              ", based on the median. It represents the median of the absolute deviations from                                  the median. Here, the MAD is \\(", 
+                              dataset$posterior[i], 
+                              "\\), indicating that the approximate deviation of data points from the median is                                 \\(", dataset$posterior[i], 
+                              "\\). The MAD is less sensitive to outliers than the Standard Deviation, making it                                a robust measure of variability.")
+  
+} else if (dataset$parameter[i] == "Mean") {
+  interpretation[i] <- paste0("The mean is the arithmetic average of the posterior distribution for the                                         function of interest ", parameter_description, ", calculated by summing all                                       values and dividing by their count. In this case, the mean is \\(", 
+                              dataset$posterior[i], "\\), representing the average value of the posterior                                       distribution.")
+  
+} else if (dataset$parameter[i] == "SD") {
+  interpretation[i] <- paste0("The SD (Standard Deviation) is a measure of the spread of the posterior                                          distribution for the function of interest ", 
+                              parameter_description, 
+                              " around the mean. It shows the average deviation of values from the mean. Here,                                   the SD is \\(", 
+                              dataset$posterior[i], 
+                              "\\), and the mean is \\(", dataset$posterior[i-1], 
+                              "\\). This means ~90% of the data points lie within the range of \\(\\pm 3 \\cdot                                 \\text{SD}\\) around the mean. Specifically, this corresponds to a range of \\(", 
+                              dataset$posterior[i-1], " - 3 \\cdot ", dataset$posterior[i], "\\) to \\(", 
+                              dataset$posterior[i-1], " + 3 \\cdot ", dataset$posterior[i], "\\).")
+  
+} else if (dataset$parameter[i] == "MAP") {
+  interpretation[i] <- paste0("MAP (Maximum A Posteriori) is the value with the highest density in the                                          posterior distribution for the function of interest ", 
+                              parameter_description, ". It represents the mode (peak) of the estimated                                          probability density function. MAP of \\(", dataset$posterior[i], "\\) indicates that                               this is the most likely value in the posterior distribution for the function of                                   interest ", parameter_description, ".")
+}
+
+  }
+  return(interpretation)
+}
+
+```
+
+```{r, eval=eval_final}
+# Summary Tabelle
+final_results <- results[1:5,]
+final_results <-  data.frame(Parameter = final_results[,1], Value=final_results[,2], Interpretation = interpretation_func(final_results, parameter_description))
+mean_value <- final_results$Value[3]
+```
+
+```{r, eval=eval_final}
+# Zeige die Tabelle mit knitr::kable()
+kable(final_results, align = "l") %>%
+  kable_styling(full_width = TRUE)
+```
+
+
+```{r plot_hdi, eval=eval_final, results="asis"}
+cat("## HDI Plot", fill=TRUE)
+# Display graphical posterior information using bayestestR package
+
+xlabel <- if (params$user_selection_function_param == 1){
+  expression(theta[1] - theta[2])
+  } else if (params$user_selection_function_param == 2){
+  expression(frac(theta[1],theta[2]))
+  } else if (params$user_selection_function_param == 3){
+  expression(1 - frac(theta[1],theta[2]))
+
+}
+hdi_result <- hdi(estimate, ci = c(.89, .95))
+
+hdi_plot_temp = plot(hdi_result)
+
+# Display the HDI plot
+hdi_plot <- plot(x=hdi_result, y=hdi_plot_temp[["data"]][["height"]]) +
+  labs(
+    x = xlabel,                 # Label for the x-axis
+    y = "Density of the Posterior Distribution",                   # Label for the y-axis
+    title = "Highest Density Interval (HDI)" # Title for the plot
+  ) +
+  theme_minimal(base_size = 14) +    # Apply a clean theme with readable font size
+  theme(
+    plot.title = element_text(hjust = 0.5),  # Center the plot title
+    legend.position = "right",               # Keep legend on the right
+    legend.text = element_text(size = 10),   # Reduce legend text size
+    legend.title = element_text(size = 11),  # Reduce legend title size
+    panel.background = element_rect(fill = "gray95", color = NA),  # Light gray background
+    panel.grid.major = element_line(color = "white"),              # Major grid lines in white
+    panel.grid.minor = element_line(color = "white")               # Minor grid lines in white
+  ) +
+  scale_y_continuous(breaks = seq(0, max(hdi_plot_temp[["data"]][["height"]]), length.out = 5))  # 5 values for the y-axis
+
+
+print(hdi_plot)
+
+```
+
+```{r, eval=eval_final}
+# Summary Tabelle
+final_results <- results[10:11,]
+final_results <-  data.frame(final_results)
+```
+
+```{r, eval=eval_final}
+
+final_results[,1] <- c(
+  "Lower Bound of HDI",        
+  "Upper Bound of HDI"         
+)
+
+colnames(final_results) <- c("95% HDI Credibility Interval", "Value")
+
+kable(final_results,
+      align = "l",
+      caption = "HDI Table",
+      row.names = FALSE) %>%
+  kable_styling(full_width = TRUE,
+                position = "center",
+                latex_options = "hold_position")
+
+```
+
+
+
+```{r interpretation_hdi, eval=eval_final, results="asis"}
+# Textuelle Interpretation - Dynamic Expression
+cat("\n\n**Theoretical Explanation:**\n\n")
+cat("This plot shows the Highest Density Intervals (HDI) for a posterior distribution, illustrating the most credible values for the parameter ")
+
+# Direkte LaTeX-Notation für xlabel
+if (params$user_selection_function_param == 1) {
+  cat("\\(\\theta_1 - \\theta_2\\)")
+} else if (params$user_selection_function_param == 2) {
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+} else if (params$user_selection_function_param == 3) {
+  cat("\\(1 - \\frac{\\theta_1}{\\theta_2}\\)")
+}
+
+cat("\n\nThe curve represents the probability density of the parameter values, with the shaded regions highlighting different HDI levels. ",
+    "The red area corresponds to the 89% HDI, which captures the majority of the distribution’s density and represents the most credible range. ",
+    "The orange region extends this to 95%, including slightly more of the distribution, while the blue region covers 100% of the density, respectively. ",
+    "Overall, the HDIs provide a visual summary of where the most credible parameter estimates lie while reflecting the uncertainty inherent in the data. \n\n")
+cat("The information in the following section is based on Kruschke, John K., Doing Bayesian Data Analysis, Academic Press, 2015. The 95% HDI includes all those values of x for which the density is at least as big as some value W, such that the integral over all those x values is 95%. Formally, the values of x in the 95% HDI are those such that\n")
+
+cat("\\begin{align*}\n",
+    "    \\text{HDI}_{95\\%} &= \\left\\{ x \\mid p(x) > W \\right\\} ",
+    "    \\text{with} \\quad \\int_{x : p(x) > W} p(x) \\, dx &= 0.95\n",
+    "\\end{align*}")
+
+cat("If the effective sample size is greater than 10.000 Kruschke recommends using the 95% interval for an estimation with high precision. For smaller effective sample sizes the 89% intervals are deemed to be more stable.")
+cat("The mean posterior value of ")
+
+cat("If the effective sample size is greater than 10.000 Kruschke recommends using the 95% interval for an estimation with high precision. For smaller effective sample sizes the 89% intervals are deemed to be more stable.\n")
+
+
+
+
+cat("\n\n**Interpretation in Relation to the Data:**\n\n")
+cat("The mean posterior value of ")
+
+
+if (params$user_selection_function_param == 1) {
+  if (mean_value < 0) {
+    comparison = "lower"
+  } else {
+    comparison = "higher"
+  }
+  cat("\\(\\theta_1 - \\theta_2\\)")
+  cat("=", mean_value, " suggests that, on average, the probability of ", 
+      name_outcome, " in the group of ", name_exposure, "(\\(\\theta_1\\)) is ", 
+      comparison, " than in the group of ", name_nonexposure, 
+      " (\\(\\theta_2\\)). However, this value alone is not sufficient to draw 
+      conclusions because it does not account for the uncertainty in the estimate. The
+      HDI of", round(results_HDI$CI_low, 3), "to ", round(results_HDI$CI_high, 3), "indicates that there is
+      a 95% probability that the true difference between ", name_outcome, " probabilities ")
+  cat("\\(\\theta_1 - \\theta_2\\)")
+  cat(" lies within this interval.")
+  if (results_HDI$CI_high > 0 && results_HDI$CI_low < 0) {
+    cat(" Since this interval includes 0, it means that the evidence is inconclusive
+        about whether being in the group of ", name_exposure, " (\\(\\theta_1\\)) increases or decreases the 
+        probability of ", name_outcome, " compared to the group of ",name_nonexposure," (\\(\\theta_2\\)).")
+  } else if (results_HDI$CI_high < 0) {
+    cat(" Since this interval lies entirely below 0, it suggests that being in the group of ", name_exposure, "
+        (\\(\\theta_1\\)) significantly decreases the probability of ", name_outcome, 
+        " compared to the group of ",name_nonexposure," (\\(\\theta_2\\)).")
+  } else {
+    cat(" Since this interval lies entirely above 0, it suggests that being in the group of ", name_exposure, "
+        (\\(\\theta_1\\)) significantly increases the probability of ", name_outcome, " compared to the group of "
+        ,name_nonexposure," (\\(\\theta_2\\)).")
+  }
+
+} else if (params$user_selection_function_param == 2) {
+  if (mean_value < 1) {
+    comparison = "lower"
+  } else {
+    comparison = "higher"
+  }
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+  cat("=", mean_value, " suggests that the relative probability of ",
+      name_outcome, " in the group of ", name_exposure, 
+      "(\\(\\theta_1\\)) is ", comparison, " compared to the group of ",
+      name_nonexposure, " (\\(\\theta_2\\)). However, this value alone is not
+      sufficient to draw conclusions because it does not account for the uncertainty
+      in the estimate. The HDI of ", round(results_HDI$CI_low, 3), " to ", round(results_HDI$CI_high, 3),
+      " indicates that there is a 95% probability that the true ratio between ", name_outcome, 
+      " probabilities ")
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+  cat(" lies within this interval.")
+  if (results_HDI$CI_high > 1 && results_HDI$CI_low < 1) {
+    cat(" Since this interval includes 1, it means that the evidence is inconclusive
+        about whether being in the group of ",name_exposure," (\\(\\theta_1\\)) increases or decreases the
+        probability of ", name_outcome, " compared to the group of ",name_nonexposure," (\\(\\theta_2\\)).")
+  } else if (results_HDI$CI_high < 1) {
+    cat(" Since this interval lies entirely below 1, it suggests that being in the group of ",name_exposure,
+    " (\\(\\theta_1\\)) significantly decreases the probability of ", name_outcome, 
+    " compared to the group of ",name_nonexposure," (\\(\\theta_2\\)).")
+  } else {
+    cat(" Since this interval lies entirely above 1, it suggests that being in the group of ",name_exposure,
+    " (\\(\\theta_1\\)) significantly increases the probability of ", name_outcome, 
+    " compared to the group of ",name_nonexposure," (\\(\\theta_2\\)).")
+  }
+
+} else if (params$user_selection_function_param == 3) {
+  if (mean_value < 0) {
+    comparison = "lower"
+  } else {
+    comparison = "higher"
+  }
+  cat("\\(1 - \\frac{\\theta_1}{\\theta_2}\\)")
+  cat("=", mean_value, " suggests the proportionate reduction in the probability of ",
+      name_outcome, " in the group of ", name_exposure,
+      "(\\(\\theta_1\\)) compared to the group of ", name_nonexposure, 
+      " (\\(\\theta_2\\)). However, this value alone is not sufficient to draw 
+      conclusions because it does not account for the uncertainty in the estimate. 
+      The HDI of ", round(results_HDI$CI_low, 3), " to ", round(results_HDI$CI_high, 3), 
+      " indicates that there is a 95% probability that the true difference between 1 
+      and the ratio of ", name_outcome," probabilities ")
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+  cat(" lies within this interval.")
+  if (results_HDI$CI_high > 0 && results_HDI$CI_low < 0) {
+    cat(" Since this interval includes 0, it means that the evidence is inconclusive
+        about whether being in the group of ",name_exposure," (\\(\\theta_1\\)) increases or decreases the
+        probability of ", name_outcome, " compared to the group of ",name_nonexposure," (\\(\\theta_2\\)).")
+  } else if (results_HDI$CI_high < 0) {
+    cat(" Since this interval lies entirely below 0, it suggests that being in the group of ",name_exposure,
+    " (\\(\\theta_1\\)) significantly decreases the probability of ", name_outcome, 
+    " compared to the group of ",name_nonexposure," (\\(\\theta_2\\)).")
+  } else {
+    cat(" Since this interval lies entirely above 0, it suggests that being in the group of ",name_exposure,
+    " (\\(\\theta_1\\)) significantly increases the probability of ", name_outcome, " compared to the group of " 
+    ,name_nonexposure," (\\(\\theta_2\\)).")
+  }
+}
+
+```
+
+
+
+
+```{r plot_eti, eval=eval_final, results="asis"}
+cat("## ETI Plot", fill=TRUE)
+
+# Display the ETI plot
+eti_result = eti(estimate, ci = c(.89, .95))
+
+eti_plot_temp = plot(eti_result)
+
+# Create the plot
+eti_plot <- plot(x=eti_result, y=eti_plot_temp[["data"]][["height"]]) +
+  labs(
+    x = xlabel,       # Dynamic x-label
+    y = "Density of the Posterior Distribution",     # Label for the y-axis
+    title = "Credible Interval (CI)" # Title for the plot
+  ) +
+  theme_minimal(base_size = 14) +        # Minimalist theme with readable font size
+  theme(
+    plot.title = element_text(hjust = 0.5),  # Center the title
+    legend.position = "right",               # Position the legend on the right
+    legend.text = element_text(size = 10),   # Reduce font size for legend text
+    legend.title = element_text(size = 11),  # Reduce font size for legend title
+    panel.background = element_rect(fill = "gray95", color = NA),  # Light gray background
+    panel.grid.major = element_line(color = "white"),              # White major grid lines
+    panel.grid.minor = element_line(color = "white")               # White minor grid lines
+  ) +
+  scale_y_continuous(breaks = seq(0, max(eti_plot_temp[["data"]][["height"]]), length.out = 5))  # 5 values for the y-axis
+
+print(eti_plot)
+```
+
+
+```{r, eval=eval_final}
+# Summary Tabelle
+final_results <- results[7:8,]
+final_results <-  data.frame(final_results)
+```
+
+```{r, eval=eval_final}
+
+final_results[,1] <- c(
+  "Lower Bound of ETI",        
+  "Upper Bound of ETI"         
+)
+
+colnames(final_results) <- c("95% ETI Credibility Interval", "Value")
+
+kable(final_results,
+      align = "l",
+      caption = "ETI Table",
+      row.names = FALSE) %>%
+  kable_styling(full_width = TRUE,
+                position = "center",
+                latex_options = "hold_position")
+
+```
+
+
+```{r interpretation_eti, eval=eval_final, results="asis"}
+# Add text interpretation
+cat("\n\n**Interpretation:**\n\n")
+cat("This plot shows the Equal Tailed Intervals (ETI) for a posterior distribution, highlighting an alternative way to visualize the most credible values for the parameter ")
+# Direkte LaTeX-Notation für xlabel
+if (params$user_selection_function_param == 1) {
+  cat("\\(\\theta_1 - \\theta_2\\)")
+} else if (params$user_selection_function_param == 2) {
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+} else if (params$user_selection_function_param == 3) {
+  cat("\\(1 - \\frac{\\theta_1}{\\theta_2}\\)")
+}
+
+cat(". Following the approach of Kruschke (Doing Bayesian Data Analysis, Chapter 12.1.2.2), the ETI is defined by trimming equal probability mass \\(\\left(\\frac{\\alpha}{2}\\right)\\) from both tails of the posterior distribution. As a result, the interval is always symmetric in terms of probability mass around the median, which ensures that the median of the distribution is included in the interval.\n\n")
+
+cat("The curve itself represents the posterior probability density for the parameter, with shaded regions indicating different ETI levels. For instance, the red band may represent an 89\\% ETI, the orange band extends the interval to 95\\%, and the blue region covers 100\\% of the distribution's density. These intervals offer a straightforward interpretation of how the posterior probability is allocated across the parameter space: each tail beyond the interval contains exactly \\(\\left(\\frac{\\alpha}{2}\\right)\\) of the total probability.\n\n")
+
+cat("Unlike the Highest Density Interval (HDI), the ETI does not necessarily capture the region of highest posterior density and may therefore exclude the mode (or modes) in skewed or multimodal distributions. However, in symmetric distributions, the ETI and HDI coincide. A key property of ETIs is that their boundaries remain unchanged under monotonic (nonlinear) transformations of parameters, making them attractive for comparing parameter estimates on different scales.\n\n")
+
+cat("In summary, the ETI provides a complementary perspective to the HDI by emphasizing an equal-probability-tail view of uncertainty: it always includes the median, guarantees equal tail areas, and has transformation-invariant limits. Nevertheless, be mindful that in highly skewed or irregular posterior distributions, the ETI may not represent the most densely populated region of the parameter space.\n")
+
+#print(results_ETI)
+
+
+cat("\n\n**Interpretation in Relation to the Data:**\n\n")
+cat("The mean posterior value of ")
+
+if (params$user_selection_function_param == 1) {
+  if (mean_value < 0) {
+    comparison = "lower"
+  } else {
+    comparison = "higher"
+  }
+  cat("\\(\\theta_1 - \\theta_2\\)")
+  cat("=", mean_value, " suggests that, on average, the probability of ", 
+      name_outcome, " in the group of ", name_exposure, "\\(\\left(\\theta_1\\right)\\) is ", 
+      comparison, " than in the group of ", name_nonexposure, 
+      " \\(\\left(\\theta_2\\right)\\). However, this value alone is not sufficient to draw conclusions because it does not account for the uncertainty in the estimate. The
+      ETI of", round(results_ETI$CI_ETI_low, 3), "to ", round(results_ETI$CI_ETI_high, 3), "indicates that there is
+      a 95% probability that the true difference between ", name_outcome, " probabilities ")
+  cat("\\(\\theta_1 - \\theta_2\\)")
+  cat(" lies within this interval.")
+  if (results_ETI$CI_ETI_high > 0 && results_ETI$CI_ETI_low < 0) {
+    cat(" Since this interval includes 0, it means that the evidence is inconclusive
+        about whether being in the group of ", name_exposure, " \\(\\left(\\theta_1\\right)\\) increases or decreases the 
+        probability of ", name_outcome, " compared to the group of ",name_nonexposure," \\(\\left(\\theta_2\\right)\\).")
+  } else if (results_ETI$CI_ETI_high < 0) {
+    cat(" Since this interval lies entirely below 0, it suggests that being in the group of ", name_exposure, "
+        \\(\\left(\\theta_1\\right)\\) significantly decreases the probability of ", name_outcome, 
+        " compared to the group of ",name_nonexposure," \\(\\left(\\theta_2\\right)\\).")
+  } else {
+    cat(" Since this interval lies entirely above 0, it suggests that being in the group of ", name_exposure, "
+        \\(\\left(\\theta_1\\right)\\) significantly increases the probability of ", name_outcome, " compared to the group of "
+        ,name_nonexposure," \\(\\left(\\theta_1\\right)\\).")
+  }
+
+} else if (params$user_selection_function_param == 2) {
+  if (mean_value < 1) {
+    comparison = "lower"
+  } else {
+    comparison = "higher"
+  }
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+  cat("=", mean_value, " suggests that the relative probability of ",
+      name_outcome, " in the group of ", name_exposure, 
+      "\\(\\left(\\theta_1\\right)\\) is ", comparison, " compared to the group of ",
+      name_nonexposure, " \\(\\left(\\theta_1\\right)\\). However, this value alone is not
+      sufficient to draw conclusions because it does not account for the uncertainty
+      in the estimate. The ETI of ", round(results_ETI$CI_ETI_low, 3), " to ", round(results_ETI$CI_ETI_high, 3),
+      " indicates that there is a 95% probability that the true ratio between ", name_outcome, 
+      " probabilities ")
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+  cat(" lies within this interval.")
+  if (results_ETI$CI_ETI_high > 1 && results_ETI$CI_ETI_low < 1) {
+    cat(" Since this interval includes 1, it means that the evidence is inconclusive
+        about whether being in the group of ",name_exposure," \\(\\left(\\theta_1\\right)\\) increases or decreases the
+        probability of ", name_outcome, " compared to the group of ",name_nonexposure," \\(\\left(\\theta_1\\right)\\).")
+  } else if (results_ETI$CI_ETI_high < 1) {
+    cat(" Since this interval lies entirely below 1, it suggests that being in the group of ",name_exposure,
+    " \\(\\left(\\theta_1\\right)\\) significantly decreases the probability of ", name_outcome, 
+    " compared to the group of ",name_nonexposure," \\(\\left(\\theta_1\\right)\\).")
+  } else {
+    cat(" Since this interval lies entirely above 1, it suggests that being in the group of ",name_exposure,
+    " \\(\\left(\\theta_1\\right)\\) significantly increases the probability of ", name_outcome, 
+    " compared to the group of ",name_nonexposure," \\(\\left(\\theta_1\\right)\\).")
+  }
+
+} else if (params$user_selection_function_param == 3) {
+  if (mean_value < 0) {
+    comparison = "lower"
+  } else {
+    comparison = "higher"
+  }
+  cat("\\(1 - \\frac{\\theta_1}{\\theta_2}\\)")
+  cat("=", mean_value, " suggests the proportionate reduction in the probability of ",
+      name_outcome, " in the group of ", name_exposure,
+      "\\(\\left(\\theta_1\\right)\\) compared to the group of ", name_nonexposure, 
+      " \\(\\left(\\theta_1\\right)\\). However, this value alone is not sufficient to draw 
+      conclusions because it does not account for the uncertainty in the estimate. 
+      The ETI of ", round(results_ETI$CI_ETI_low, 3), " to ", round(results_ETI$CI_ETI_high, 3), 
+      " indicates that there is a 95% probability that the true difference between 1 
+      and the ratio of ", name_outcome," probabilities ")
+  cat("\\(\\frac{\\theta_1}{\\theta_2}\\)")
+  cat(" lies within this interval.")
+  if (results_ETI$CI_ETI_high > 0 && results_ETI$CI_ETI_low < 0) {
+    cat(" Since this interval includes 0, it means that the evidence is inconclusive
+        about whether being in the group of ",name_exposure," \\(\\left(\\theta_1\\right)\\) increases or decreases the
+        probability of ", name_outcome, " compared to the group of ",name_nonexposure," \\(\\left(\\theta_1\\right)\\).")
+  } else if (results_ETI$CI_ETI_high < 0) {
+    cat(" Since this interval lies entirely below 0, it suggests that being in the group of ",name_exposure,
+    " \\(\\left(\\theta_1\\right)\\) significantly decreases the probability of ", name_outcome, 
+    " compared to the group of ",name_nonexposure," \\(\\left(\\theta_1\\right)\\).")
+  } else {
+    cat(" Since this interval lies entirely above 0, it suggests that being in the group of ",name_exposure,
+    " \\(\\left(\\theta_1\\right)\\) significantly increases the probability of ", name_outcome, " compared to the group of " 
+    ,name_nonexposure," \\(\\left(\\theta_1\\right)\\).")
+  }
+}
+```
+
+```{r runtests, eval=FALSE}
+# Run tests  
+library('testthat')
+testthat::test_dir('tests/testthat/')
+```
+
+```{r cleanenv}
+# Clean environment 
+rm(list=ls())
+```

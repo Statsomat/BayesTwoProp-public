@@ -1,0 +1,13 @@
+name: bayes_twoprop
+title: bayes_twoprop
+username: statsomat
+account: statsomat
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 13518359
+bundleId: 9459983
+url: https://statsomat.shinyapps.io/bayes_twoprop/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData

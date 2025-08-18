@@ -1,0 +1,41 @@
+<div>
+  <h3>Description</h3>
+</div>
+
+<p>
+This application is designed to help you analyze the relationship between an exposure and an outcome using Bayesian statistical methods.  
+By uploading a dataset and defining key parameters, you can calculate and interpret measures of association between the exposure of interest and the outcome.
+</p>
+
+<p>
+<strong>Data Input and Processing:</strong><br>
+The first option is to upload a CSV file containing your data. The file must include at least one column for the exposure variable (e.g., vaccine status) and one for the outcome variable (e.g., presence of a disease).  
+The app provides a straightforward interface to select the relevant variables and specify labels for exposure and outcome presence.
+The other option is to insert the frequencies of occurence via the table.
+</p>
+
+<p>
+<strong>Bayesian Prior Distributions:</strong><br>
+The app uses Beta distributions to model prior beliefs about the probabilities of the outcome in the exposed and control groups.  
+You can specify the input parameters (a1, b1, a2, b2) to reflect the prior knowledge or assumptions. These priors can influence the final estimates, allowing for robust inference when the sample size is small or incomplete.
+Default parameters are based on Jeffrey’s prior, which is a non-informative prior distribution, ensuring minimal influence of prior beliefs on the results.
+</p>
+
+<p>
+<strong>Calculation of Posterior Distributions:</strong><br>
+Based on the uploaded data and prior distributions, the app calculates posterior distributions for the probabilities of the outcome in the exposed and control groups.  
+This posterior estimation combines prior beliefs with observed data to provide updated probabilities.
+</p>
+
+<p>
+<strong>Statistical Comparisons:</strong><br>
+The app offers three functions for comparing the probability of an outcome (e.g., event) between the two groups exposed and unexposed (e.g., control group):<br>
+- <strong>θ₁ - θ₂</strong>: The difference in the probabilities of an outcome.<br>
+- <strong>θ₁ / θ₂</strong>: The ratio of the probabilities of an outcome, e.g., the relative risk associated with the exposure.<br>
+- <strong>1 - θ₁ / θ₂</strong>: The relative decrease in the probability of an outcome in the exposed group compared to the unexposed group, e.g., the relative risk reduction.
+</p>
+
+<p>
+  <strong>Contributors:</strong><br>
+  Contributors to the app are students of the University of Applied Sciences Koblenz, Germany. 
+</p>
