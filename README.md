@@ -37,6 +37,3 @@ The app offers three functions for comparing the probability of an outcome (e.g.
 
 The contributors are students of the University of Applied Sciences Koblenz, Germany. 
 
-## Contributor Privacy
-If you wish to be anonymized in this repository at any time, contact [https://www.hs-koblenz.de/profile/welsch] and we will update the commit history to remove identifying information.
-
