@@ -6,8 +6,4 @@ This public repository contains **snapshots (squash commits)** from a private wo
 
 The commit history in this public repository therefore does **not reflect individual authorship**.  
 
-author: 
-  - Denise Welsch
-  - Contributors^[Theresa Binot, Viktoria Daum, Renée Defren, Chiara Freitag, Jule Grote, Konrad Junkes, Anna-Lena Künster, Jomana Reusch, Simone Schüttler]
-
 Other students have also contributed to this project. 
