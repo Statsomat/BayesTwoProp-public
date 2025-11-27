@@ -6,4 +6,4 @@ This public repository contains **snapshots (squash commits)** from a private wo
 
 The commit history in this public repository therefore does **not reflect individual authorship**.  
 
-Other students have also contributed to this project. 
+Other students have also contributed to this project, some of them chose to be listed as contributors within the generated report of the app. 
