@@ -6,5 +6,4 @@ This public repository contains **snapshots (squash commits)** from a private wo
 
 The commit history in this public repository therefore does **not reflect individual authorship**.  
 
-Other students have also contributed to this project but chose to remain anonymous.  
-
+Other students have also contributed to this project. 
